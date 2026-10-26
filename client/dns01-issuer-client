@@ -186,8 +186,11 @@ checkin() {
 	if [ -f "$CERT_FILE" ]; then
 		serial=$(openssl x509 -in "$CERT_FILE" -noout -serial | cut -d= -f2)
 	fi
-	body=$(printf '{"name":"%s","time":%s,"addresses":%s,"lookup":%s,"installed_serial":"%s"}' \
-		"$NAME" "$(date +%s)" "$(json_list "${addresses[@]}")" "$(json_list "${lookup[@]}")" "$serial")
+	# The nonce keeps two check-ins in the same second distinct; the issuer
+	# refuses a body identical to the last one it accepted.
+	body=$(printf '{"name":"%s","time":%s,"nonce":"%s","addresses":%s,"lookup":%s,"installed_serial":"%s"}' \
+		"$NAME" "$(date +%s)" "$(openssl rand -hex 16)" "$(json_list "${addresses[@]}")" "$(json_list "${lookup[@]}")" \
+		"$serial")
 	printf '%s' "$body" >"$STATE_DIR/checkin.json"
 	sig=$(openssl dgst -sha256 -sign "$KEY_FILE" "$STATE_DIR/checkin.json" | openssl base64 -A)
 	code=$(http "$STATE_DIR/checkin-response.json" -X POST -H "x-signature: $sig" \

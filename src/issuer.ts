@@ -161,16 +161,20 @@ export class Issuer {
     if (Math.abs(deviceTime - this.now()) > CHECKIN_CLOCK_SKEW) {
       return { ok: false, status: 400, error: '"time" is more than 5 minutes from the issuer\'s clock' };
     }
+    // Replays: an older time is refused, and so is the exact body last accepted.
+    // `time` has one-second resolution, so two genuine check-ins can share it;
+    // the client puts a random nonce in every body to keep those distinct.
     const previous = this.store.checkin(entry.name);
-    if (previous && deviceTime <= previous.device_time) {
-      return { ok: false, status: 409, error: '"time" is not later than the previous check-in (replay?)' };
+    const text = new TextDecoder().decode(body);
+    if (previous && (deviceTime < previous.device_time || text === previous.report)) {
+      return { ok: false, status: 409, error: 'older than, or identical to, the last check-in (replay?)' };
     }
     this.store.putCheckin({
       name: entry.name,
       at: this.now(),
       device_time: deviceTime,
       source_ip: sourceIp,
-      report: new TextDecoder().decode(body),
+      report: text,
     });
     const current = this.certificatePem(entry.name) ? this.store.cert(entry.name)! : null;
     return {

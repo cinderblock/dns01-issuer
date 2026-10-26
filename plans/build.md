@@ -84,10 +84,10 @@ certificates:
 3. [x] ACME client and ARI, with unit tests where they don't need a CA.
 4. [x] DNS providers and checks.
 5. [x] Store, issuer, server, status page.
-6. [ ] Client script and systemd units. **(current)**
+6. [x] Client script and systemd units; the e2e suite runs the real script.
 7. [x] End-to-end test against Pebble: unbound refused, bound issued, fetched, checked in, renewed with `replaces`. 9 tests, ~7 s.
-8. [ ] Dockerfile (base image pinned by digest), CI workflow (test, e2e, build, push), README.
-9. [ ] Cameron: final name, then create the GitHub repo and push.
+8. [x] Dockerfile (`oven/bun:1.4.2-slim` pinned by digest), CI workflow (typecheck, format, unit, shellcheck, Pebble e2e, build, push), README, MIT license. **The image has not been built yet**: there is no Docker on this machine. CI's first run is its first build.
+9. [ ] Cameron: final name and license, then create the GitHub repo and push. **(current, waiting on Cameron)**
 
 ## Findings / gotchas
 
@@ -96,12 +96,15 @@ certificates:
 - **`lib` has no DOM,** so `BufferSource` and `JsonWebKey` aren't global types; each file that needs one defines it locally.
 - **Pebble's test localhost certificate expires 2027-10-03** (`test/pebble/README.md`). The e2e test fails after that until the files are refreshed from a newer Pebble.
 - **challtestsrv answers every A/AAAA query with 127.0.0.1/::1 by default.** The e2e test passes `-defaultIPv4 '' -defaultIPv6 ''` so that "not in public DNS" can be tested; names get addresses only through `/add-a`.
+- **Check-ins in the same second were refused as replays.** `time` is whole seconds, and the e2e test's second client run sometimes landed in the same second as the first (about 1 run in 6). Now the client adds a random `nonce`, and the issuer refuses an older time or a body identical to the last accepted one; equal times with different bodies pass. Eight consecutive e2e runs passed after the fix.
+- **A curl failure printed two contradictory errors** ("cannot reach", then "CSR refused: HTTP 000"), because `die` inside `$(...)` exits only the subshell. `http` now just fails, and every caller stops with `|| unreachable`.
 - **An unverified test vector was caught.** The first JWK thumbprint test asserted a value that had never been computed independently, and it failed. It now checks the canonical form; the Pebble run is the independent check, since a wrong thumbprint fails DNS-01.
 
 ## Progress log
 
 - [x] 2026-10-26 ~2:05 AM PDT (09:05Z): core issuer written; 25 unit tests and 9 Pebble e2e tests pass; typecheck clean.
-- [ ] Client script, Dockerfile, CI, README
+- [x] 2026-10-26: client script and units, Dockerfile, CI workflow, README, license. 25 unit + 11 e2e tests; shellcheck 0.10.0 clean at all severities.
+- [ ] Name, license and repo creation (Cameron)
 
 ## Things not to do
 

@@ -53,6 +53,8 @@ export type StatusData = {
   unbound: UnboundRow[];
   events: EventRow[];
   now: number;
+  /** The running build's commit, if known. */
+  build?: string;
 };
 
 export function renderStatus(d: StatusData): string {
@@ -161,7 +163,7 @@ small, .dim { opacity: .65; }
 ul.events { padding-left: 1rem; font-size: .9rem; }
 </style></head><body>
 <h1>dns01-issuer</h1>
-<p class="dim">Read-only. What may be issued is decided by the config file, not here. Generated ${formatTime(d.now, tz)}.</p>
+<p class="dim">Read-only. What may be issued is decided by the config file, not here. Generated ${formatTime(d.now, tz)}${d.build ? `, build <code>${esc(d.build.slice(0, 12))}</code>` : ''}.</p>
 ${rows || '<p>No certificates are configured.</p>'}
 ${orphans.length ? `<p class="dim">In the database but no longer configured: ${esc(orphans.join(', '))}</p>` : ''}
 ${unbound}

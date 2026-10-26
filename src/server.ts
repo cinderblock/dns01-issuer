@@ -22,8 +22,14 @@ async function readBody(req: Request): Promise<Uint8Array | Response> {
   return body;
 }
 
-export function makeHandler(deps: { config: Config; issuer: Issuer; store: Store; now?: () => number }) {
-  const { config, issuer, store } = deps;
+export function makeHandler(deps: {
+  config: Config;
+  issuer: Issuer;
+  store: Store;
+  now?: () => number;
+  build?: string;
+}) {
+  const { config, issuer, store, build } = deps;
   const now = deps.now ?? Date.now;
 
   return async function handle(req: Request, peer: string): Promise<Response> {
@@ -65,7 +71,7 @@ export function makeHandler(deps: { config: Config; issuer: Issuer; store: Store
         return result.ok ? json(200, result) : json(result.status, { error: result.error });
       }
 
-      if (path === '/healthz') return new Response('ok\n');
+      if (path === '/healthz') return new Response(`ok${build ? ` ${build}` : ''}\n`);
 
       if (path === '/') {
         if (req.method !== 'GET' && req.method !== 'HEAD') return json(405, { error: 'GET only' });
@@ -76,6 +82,7 @@ export function makeHandler(deps: { config: Config; issuer: Issuer; store: Store
           unbound: store.allUnbound(),
           events: store.recentEvents(),
           now: now(),
+          build,
         });
         return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
       }

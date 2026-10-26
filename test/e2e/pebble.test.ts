@@ -259,6 +259,14 @@ describe('dns01-issuer against Pebble', () => {
     const replay = await call('POST', '/api/v1/checkin', { body, headers: { 'x-signature': sign(body) } });
     expect(replay.status).toBe(409);
 
+    // Same second, different body (the client's nonce): a genuine second check-in.
+    const sameSecond = JSON.stringify({ name: ROBOT, time: Math.floor(clock / 1000), nonce: 'b' });
+    const again = await call('POST', '/api/v1/checkin', {
+      body: sameSecond,
+      headers: { 'x-signature': sign(sameSecond) },
+    });
+    expect(again.status).toBe(200);
+
     const later = JSON.stringify({ name: ROBOT, time: Math.floor(clock / 1000) + 1 });
     const forged = await call('POST', '/api/v1/checkin', { body: later, headers: { 'x-signature': sign(body) } });
     expect(forged.status).toBe(401);

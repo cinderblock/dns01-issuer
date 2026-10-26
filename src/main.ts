@@ -34,7 +34,7 @@ const acme = new AcmeClient({
   log: m => console.log(`acme: ${m}`),
 });
 const issuer = new Issuer({ config, store, acme, providers });
-const handle = makeHandler({ config, issuer, store });
+const handle = makeHandler({ config, issuer, store, build: process.env.BUILD_SHA });
 
 const server = Bun.serve({
   hostname: config.listen.hostname,

@@ -1,0 +1,7 @@
+node_modules
+.git
+test
+plans
+client
+data
+.e2e
