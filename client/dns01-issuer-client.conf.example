@@ -1,0 +1,8 @@
+# /etc/dns01-issuer-client.conf — read by dns01-issuer-client.service.
+ISSUER=https://issuer.example.com
+NAME=device-1.fleet.example.com
+# ALT_NAMES="other.fleet.example.com"
+KEY_FILE=/etc/caddy/tls/device.key
+CERT_FILE=/etc/caddy/tls/device.crt
+KEY_GROUP=caddy
+RELOAD="systemctl reload caddy"

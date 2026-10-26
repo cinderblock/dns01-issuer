@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# dns01-issuer-client: keep this device's certificate current.
+#
+# The device makes its own key, which never leaves it, and sends a CSR to the
+# issuer. The issuer issues only once its config binds this device's names to
+# this key's fingerprint, so the first run prints that fingerprint for whoever
+# edits the issuer's config.
+#
+#   dns01-issuer-client fingerprint   make the key if needed; print its fingerprint and a config entry
+#   dns01-issuer-client run           send the CSR, install any new certificate, check in
+#
+# Settings come from the environment (the systemd unit loads
+# /etc/dns01-issuer-client.conf):
+#
+#   ISSUER      base URL, e.g. https://issuer.example.com            (required)
+#   NAME        the certificate's primary DNS name                    (required)
+#   ALT_NAMES   more DNS names, space separated                       (optional)
+#   KEY_FILE    private key path; created on first run               (required)
+#   CERT_FILE   where the full chain is installed                    (required)
+#   KEY_GROUP   group allowed to read KEY_FILE, e.g. caddy            (optional)
+#   STATE_DIR   working files                    (default /var/lib/dns01-issuer-client)
+#   RELOAD      command run after a new certificate is installed      (optional)
+#   WAIT_SECONDS  how long `run` waits for a just-queued certificate  (default 180)
+#
+# Needs: bash, openssl (1.1.1 or later), curl.
+
+set -euo pipefail
+
+die() {
+	echo "dns01-issuer-client: $*" >&2
+	exit 1
+}
+
+need() {
+	[ -n "${!1:-}" ] || die "$1 is not set"
+}
+
+need ISSUER
+need NAME
+need KEY_FILE
+need CERT_FILE
+STATE_DIR=${STATE_DIR:-/var/lib/dns01-issuer-client}
+WAIT_SECONDS=${WAIT_SECONDS:-180}
+ISSUER=${ISSUER%/}
+NAMES=("$NAME")
+for n in ${ALT_NAMES:-}; do NAMES+=("$n"); done
+
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
+
+ensure_key() {
+	if [ -f "$KEY_FILE" ]; then return; fi
+	mkdir -p "$(dirname "$KEY_FILE")"
+	local tmp
+	tmp=$(mktemp "$(dirname "$KEY_FILE")/.key.XXXXXX")
+	(umask 077 && openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$tmp")
+	if [ -n "${KEY_GROUP:-}" ]; then
+		chgrp "$KEY_GROUP" "$tmp"
+		chmod 640 "$tmp"
+	else
+		chmod 600 "$tmp"
+	fi
+	mv "$tmp" "$KEY_FILE"
+	echo "made a new P-256 key at $KEY_FILE"
+}
+
+fingerprint() {
+	echo "sha256/$(openssl pkey -in "$KEY_FILE" -pubout -outform DER | openssl dgst -sha256 -binary | openssl base64 -A)"
+}
+
+# The CSR is kept, and remade only when the names or the key change, so the
+# issuer sees the same request every run.
+ensure_csr() {
+	local csr="$STATE_DIR/request.csr" stamp="$STATE_DIR/request.stamp" want
+	want="$(fingerprint) ${NAMES[*]}"
+	if [ -f "$csr" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want" ]; then return; fi
+	local conf="$STATE_DIR/request.cnf" san="" n
+	for n in "${NAMES[@]}"; do san="${san:+$san,}DNS:$n"; done
+	printf '[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nO=dns01-issuer-client\n[ext]\nsubjectAltName=%s\n' "$san" >"$conf"
+	openssl req -new -key "$KEY_FILE" -config "$conf" -reqexts ext -out "$csr.tmp"
+	mv "$csr.tmp" "$csr"
+	echo "$want" >"$stamp"
+}
+
+# curl wrapper: body to $1, HTTP status on stdout. Fails (curl's message on
+# stderr) when the issuer can't be reached; callers stop with `|| unreachable`.
+# It runs in a command substitution, so it can't exit the script itself.
+http() {
+	local out=$1
+	shift
+	curl --silent --show-error --max-time 30 --output "$out" --write-out '%{http_code}' "$@"
+}
+
+unreachable() {
+	die "cannot reach $ISSUER"
+}
+
+submit_csr() {
+	local body="$STATE_DIR/csr-response.json" code
+	code=$(http "$body" -X POST --data-binary "@$STATE_DIR/request.csr" "$ISSUER/api/v1/csr") || unreachable
+	case "$code" in
+	200 | 202) echo "$code" ;;
+	403)
+		echo "the issuer has no binding for this key yet:" >&2
+		cat "$body" >&2
+		echo >&2
+		echo "add this to the issuer's config, then run again:" >&2
+		config_entry >&2
+		exit 3
+		;;
+	*)
+		cat "$body" >&2
+		die "CSR refused: HTTP $code"
+		;;
+	esac
+}
+
+config_entry() {
+	echo "  - name: $NAME"
+	if [ "${#NAMES[@]}" -gt 1 ]; then
+		local alts="${NAMES[*]:1}"
+		echo "    alt_names: [${alts// /, }]"
+	fi
+	echo "    key: $(fingerprint)"
+}
+
+# Fetch the current chain into $STATE_DIR/fetched.pem. 0 = got one, 1 = none yet.
+fetch_cert() {
+	local code
+	code=$(http "$STATE_DIR/fetched.pem" "$ISSUER/api/v1/certificates/$NAME") || unreachable
+	case "$code" in
+	200) return 0 ;;
+	404) return 1 ;;
+	*)
+		cat "$STATE_DIR/fetched.pem" >&2
+		die "certificate fetch failed: HTTP $code"
+		;;
+	esac
+}
+
+# Install the fetched chain if it is new, valid, for this key and these names.
+install_cert() {
+	local fetched="$STATE_DIR/fetched.pem"
+	if [ -f "$CERT_FILE" ] && cmp -s "$fetched" "$CERT_FILE"; then
+		echo "certificate unchanged"
+		return 1
+	fi
+	openssl x509 -in "$fetched" -noout -checkend 0 >/dev/null || die "the issuer served an expired certificate"
+	[ "$(openssl x509 -in "$fetched" -noout -pubkey)" = "$(openssl pkey -in "$KEY_FILE" -pubout)" ] ||
+		die "the issuer served a certificate for a different key"
+	local sans n
+	sans=$(openssl x509 -in "$fetched" -noout -ext subjectAltName)
+	for n in "${NAMES[@]}"; do
+		grep -qF "DNS:$n" <<<"$sans" || die "the issuer served a certificate without $n"
+	done
+	mkdir -p "$(dirname "$CERT_FILE")"
+	cp "$fetched" "$CERT_FILE.tmp"
+	chmod 644 "$CERT_FILE.tmp"
+	mv "$CERT_FILE.tmp" "$CERT_FILE"
+	echo "installed $(openssl x509 -in "$CERT_FILE" -noout -serial) $(openssl x509 -in "$CERT_FILE" -noout -enddate)"
+	return 0
+}
+
+json_list() {
+	local first=1 item
+	printf '['
+	for item in "$@"; do
+		[ -n "$item" ] || continue
+		# Addresses only: digits, hex, dots and colons. Anything else is dropped.
+		[[ $item =~ ^[0-9A-Fa-f.:]+$ ]] || continue
+		[ $first -eq 1 ] || printf ','
+		printf '"%s"' "$item"
+		first=0
+	done
+	printf ']'
+}
+
+checkin() {
+	local addresses=() lookup=() serial="" body sig code
+	if command -v hostname >/dev/null && hostname -I >/dev/null 2>&1; then
+		read -r -a addresses <<<"$(hostname -I)"
+	fi
+	if command -v getent >/dev/null; then
+		mapfile -t lookup < <(getent ahosts "$NAME" | awk '{print $1}' | sort -u)
+	fi
+	if [ -f "$CERT_FILE" ]; then
+		serial=$(openssl x509 -in "$CERT_FILE" -noout -serial | cut -d= -f2)
+	fi
+	body=$(printf '{"name":"%s","time":%s,"addresses":%s,"lookup":%s,"installed_serial":"%s"}' \
+		"$NAME" "$(date +%s)" "$(json_list "${addresses[@]}")" "$(json_list "${lookup[@]}")" "$serial")
+	printf '%s' "$body" >"$STATE_DIR/checkin.json"
+	sig=$(openssl dgst -sha256 -sign "$KEY_FILE" "$STATE_DIR/checkin.json" | openssl base64 -A)
+	code=$(http "$STATE_DIR/checkin-response.json" -X POST -H "x-signature: $sig" \
+		-H 'content-type: application/json' --data-binary "@$STATE_DIR/checkin.json" "$ISSUER/api/v1/checkin") || unreachable
+	[ "$code" = 200 ] || {
+		cat "$STATE_DIR/checkin-response.json" >&2
+		die "check-in refused: HTTP $code"
+	}
+	echo "checked in"
+}
+
+case "${1:-run}" in
+fingerprint)
+	ensure_key
+	echo "key fingerprint: $(fingerprint)"
+	echo "issuer config entry:"
+	config_entry
+	;;
+run)
+	ensure_key
+	ensure_csr
+	status=$(submit_csr) || exit
+	got=1
+	if fetch_cert; then
+		got=0
+	elif [ "$status" = 202 ]; then
+		echo "certificate queued; waiting up to ${WAIT_SECONDS}s"
+		deadline=$(($(date +%s) + WAIT_SECONDS))
+		while [ "$(date +%s)" -lt "$deadline" ]; do
+			sleep 5
+			if fetch_cert; then
+				got=0
+				break
+			fi
+		done
+	fi
+	if [ $got -eq 0 ]; then
+		if install_cert && [ -n "${RELOAD:-}" ]; then
+			echo "running: $RELOAD"
+			bash -c "$RELOAD"
+		fi
+	else
+		echo "no certificate yet; the issuer's status page says why"
+	fi
+	checkin
+	;;
+*)
+	die "usage: dns01-issuer-client [run|fingerprint]"
+	;;
+esac

@@ -220,7 +220,15 @@ export class Issuer {
   }
 
   private async pass() {
-    for (const entry of this.config.certificates) {
+    // A device that has just sent a CSR is usually polling for the result, so
+    // certificates with a CSR and no current certificate go first; the DNS and
+    // ARI refreshes for everything else can wait behind them.
+    const waitingForFirst = (c: CertificateConfig) => {
+      const row = this.store.cert(c.name);
+      return row?.csr_pin === c.key && row.cert_pin !== c.key ? 0 : 1;
+    };
+    const ordered = [...this.config.certificates].sort((a, b) => waitingForFirst(a) - waitingForFirst(b));
+    for (const entry of ordered) {
       try {
         await this.refreshDns(entry);
         await this.refreshAri(entry);

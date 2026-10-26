@@ -1,0 +1,9 @@
+[Unit]
+Description=Keep this device's TLS certificate current (dns01-issuer-client)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dns01-issuer-client.conf
+ExecStart=/usr/local/bin/dns01-issuer-client run

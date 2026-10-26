@@ -20,6 +20,7 @@ import { makeProvider } from '../../src/dns/providers';
 import { Issuer } from '../../src/issuer';
 import { makeHandler } from '../../src/server';
 import { Store } from '../../src/store';
+import { existsSync } from 'node:fs';
 import { openssl, opensslKeyAndCsr, tempDir } from '../helpers';
 
 const PEBBLE_DIR = resolve(import.meta.dir, '../pebble');
@@ -60,6 +61,10 @@ let issuer: Issuer;
 let clock = Date.now();
 let handle: ReturnType<typeof makeHandler>;
 const device = opensslKeyAndCsr([ROBOT]);
+// The shell client's key, made ahead so the config can bind it; the client
+// finds the file in place and uses it, as it would after its first run.
+const CLIENT_ROBOT = `robot-3.${ZONE}`;
+const clientDevice = opensslKeyAndCsr([CLIENT_ROBOT]);
 const minica = readFileSync(join(PEBBLE_DIR, 'minica.pem'), 'utf8');
 
 beforeAll(async () => {
@@ -126,6 +131,7 @@ beforeAll(async () => {
     certificates: [
       { name: ROBOT, key: device.pin, require_public_dns: true, inside_resolver: DNS },
       { name: `robot-2.${ZONE}`, key: 'sha256/' + Buffer.alloc(32, 9).toString('base64') },
+      { name: CLIENT_ROBOT, key: clientDevice.pin },
     ],
   });
   store = new Store(join(work, 'issuer.sqlite'));
@@ -294,4 +300,85 @@ describe('dns01-issuer against Pebble', () => {
     expect(html).toMatch(/P[DS]T <small>\(\d\d:\d\dZ\)<\/small>/);
     expect(html).not.toContain('title=');
   });
+});
+
+/** Git Bash on Windows, not WSL's bash.exe, which PATH may find first. */
+function bash(): string {
+  if (process.env.BASH_BIN) return process.env.BASH_BIN;
+  if (process.platform !== 'win32') return 'bash';
+  const git = 'C:/Program Files/Git/bin/bash.exe';
+  if (!existsSync(git)) throw new Error(`set BASH_BIN: ${git} not found`);
+  return git;
+}
+
+/** Run the client asynchronously: the issuer it talks to runs in this process. */
+async function runClient(issuerUrl: string, dir: string, reload: string) {
+  const proc = Bun.spawn([bash(), resolve(import.meta.dir, '../../client/dns01-issuer-client'), 'run'], {
+    env: {
+      ...process.env,
+      ISSUER: issuerUrl,
+      NAME: CLIENT_ROBOT,
+      KEY_FILE: clientDevice.keyFile.replace(/\\/g, '/'),
+      CERT_FILE: `${dir}/tls/cert.pem`,
+      STATE_DIR: `${dir}/state`,
+      RELOAD: reload,
+      WAIT_SECONDS: '90',
+    },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [code, out, err] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { code, out, err };
+}
+
+describe('the shell client', () => {
+  test('fingerprint prints the pin the issuer computes', async () => {
+    const dir = tempDir().replace(/\\/g, '/');
+    const proc = Bun.spawnSync([bash(), resolve(import.meta.dir, '../../client/dns01-issuer-client'), 'fingerprint'], {
+      env: {
+        ...process.env,
+        ISSUER: 'http://unused',
+        NAME: CLIENT_ROBOT,
+        KEY_FILE: clientDevice.keyFile.replace(/\\/g, '/'),
+        CERT_FILE: `${dir}/cert.pem`,
+        STATE_DIR: `${dir}/state`,
+      },
+    });
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout.toString()).toContain(`key: ${clientDevice.pin}`);
+  });
+
+  test('run: sends its CSR, waits for issuance, installs, reloads and checks in', async () => {
+    clock = Date.now();
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: (req, srv) => handle(req, srv.requestIP(req)?.address ?? ''),
+    });
+    try {
+      const dir = tempDir().replace(/\\/g, '/');
+      const { code, out, err } = await runClient(`http://127.0.0.1:${server.port}`, dir, `touch '${dir}/reloaded'`);
+      if (code !== 0) console.error(out, err);
+      expect(code).toBe(0);
+      expect(out).toContain('installed serial=');
+      expect(out).toContain('checked in');
+      expect(existsSync(`${dir}/reloaded`)).toBe(true);
+      const installed = await certificateFacts(readFileSync(`${dir}/tls/cert.pem`, 'utf8'));
+      expect(installed.pin).toBe(clientDevice.pin);
+      expect(store.checkin(CLIENT_ROBOT)?.source_ip).toBe('127.0.0.1');
+
+      // A second run changes nothing and reloads nothing.
+      const again = await runClient(`http://127.0.0.1:${server.port}`, dir, `echo reloaded-again`);
+      if (again.code !== 0) console.error(again.out, again.err);
+      expect(again.code).toBe(0);
+      expect(again.out).toContain('certificate unchanged');
+      expect(again.out).not.toContain('reloaded-again');
+    } finally {
+      server.stop(true);
+    }
+  }, 120_000);
 });
