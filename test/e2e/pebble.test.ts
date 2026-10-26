@@ -303,6 +303,8 @@ describe('dns01-issuer against Pebble', () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain(ROBOT);
+    // Each configured name links to its site, in the list at the top and in its heading.
+    expect(html.split(`<a href="https://${ROBOT}/">${ROBOT}</a>`).length - 1).toBe(2);
     expect(html).toContain('current');
     expect(html).toContain('Requests with no binding');
     expect(html).toMatch(/P[DS]T <small>\(\d\d:\d\dZ\)<\/small>/);

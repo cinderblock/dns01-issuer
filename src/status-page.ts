@@ -57,6 +57,9 @@ export type StatusData = {
   build?: string;
 };
 
+/** A configured name, linked to the site it is a certificate for. */
+const site = (name: string) => `<a href="https://${esc(name)}/">${esc(name)}</a>`;
+
 export function renderStatus(d: StatusData): string {
   const tz = d.config.displayTimezone;
   const configured = new Set(d.config.certificates.map(c => c.name));
@@ -93,8 +96,8 @@ export function renderStatus(d: StatusData): string {
       ].join('');
 
       return `<section class="cert">
-  <h2>${esc(c.name)} ${state}</h2>
-  ${c.altNames.length ? `<p class="dim">also ${esc(c.altNames.join(', '))}</p>` : ''}
+  <h2>${site(c.name)} ${state}</h2>
+  ${c.altNames.length ? `<p class="dim">also ${c.altNames.map(site).join(', ')}</p>` : ''}
   <dl>
     <dt>Key</dt><dd><code>${esc(c.key)}</code></dd>
     <dt>Certificate</dt><dd>${
@@ -161,9 +164,11 @@ small, .dim { opacity: .65; }
 .badge.ok { background: var(--ok); } .badge.bad { background: var(--bad); } .badge.na { background: var(--na); }
 .err { color: var(--bad); } .note { opacity: .8; font-style: italic; }
 ul.events { padding-left: 1rem; font-size: .9rem; }
+ul.sites { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; }
 </style></head><body>
 <h1>dns01-issuer</h1>
 <p class="dim">Read-only. What may be issued is decided by the config file, not here. Generated ${formatTime(d.now, tz)}${d.build ? `, build <code>${esc(d.build.slice(0, 12))}</code>` : ''}.</p>
+${d.config.certificates.length ? `<nav><ul class="sites">${d.config.certificates.map(c => `<li>${site(c.name)}</li>`).join('')}</ul></nav>` : ''}
 ${rows || '<p>No certificates are configured.</p>'}
 ${orphans.length ? `<p class="dim">In the database but no longer configured: ${esc(orphans.join(', '))}</p>` : ''}
 ${unbound}
