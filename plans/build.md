@@ -87,7 +87,7 @@ certificates:
 6. [x] Client script and systemd units; the e2e suite runs the real script.
 7. [x] End-to-end test against Pebble: unbound refused, bound issued, fetched, checked in, renewed with `replaces`. 9 tests, ~7 s.
 8. [x] Dockerfile (`oven/bun:1.4.2-slim` pinned by digest), CI workflow (typecheck, format, unit, shellcheck, Pebble e2e, build, push), README, MIT license. **The image has not been built yet**: there is no Docker on this machine. CI's first run is its first build.
-9. [ ] Cameron: final name and license, then create the GitHub repo and push. **(current, waiting on Cameron)**
+9. [x] Published as `cinderblock/dns01-issuer` (public, MIT), 2026-10-26. Before the first push the unpublished history was rewritten to remove local machine paths and references to the private infrastructure repo; the content of every commit is otherwise unchanged.
 
 ## Findings / gotchas
 
@@ -105,7 +105,7 @@ certificates:
 
 - [x] 2026-10-26 ~2:05 AM PDT (09:05Z): core issuer written; 25 unit tests and 9 Pebble e2e tests pass; typecheck clean.
 - [x] 2026-10-26: client script and units, Dockerfile, CI workflow, README, license. 25 unit + 11 e2e tests; shellcheck 0.10.0 clean at all severities.
-- [ ] Name, license and repo creation (Cameron)
+- [x] 2026-10-26: published; history scrubbed of local paths and private-infra references first. Next: CI's first run, which is also the first image build.
 
 ## Things not to do
 
