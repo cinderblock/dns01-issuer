@@ -82,6 +82,14 @@ ensure_csr() {
 	echo "$want" >"$stamp"
 }
 
+csr_accepted() {
+	[ -f "$STATE_DIR/request.accepted" ] && cmp -s "$STATE_DIR/request.accepted" "$STATE_DIR/request.stamp"
+}
+
+mark_csr_accepted() {
+	cp "$STATE_DIR/request.stamp" "$STATE_DIR/request.accepted"
+}
+
 # curl wrapper: body to $1, HTTP status on stdout. Fails (curl's message on
 # stderr) when the issuer can't be reached; callers stop with `|| unreachable`.
 # It runs in a command substitution, so it can't exit the script itself.
@@ -101,6 +109,12 @@ submit_csr() {
 	case "$code" in
 	200 | 202) echo "$code" ;;
 	403)
+		# The issuer's own refusal says "unbound". Any other 403 is something in
+		# front of it, e.g. a proxy that only takes CSRs from the local network.
+		grep -q '"status": *"unbound"' "$body" || {
+			cat "$body" >&2
+			die "CSR refused: HTTP 403 (not from the issuer's binding check)"
+		}
 		echo "the issuer has no binding for this key yet:" >&2
 		cat "$body" >&2
 		echo >&2
@@ -212,11 +226,25 @@ fingerprint)
 run)
 	ensure_key
 	ensure_csr
-	status=$(submit_csr) || exit
+	# The issuer keeps the CSR and renews from it, so it is sent only when it is
+	# new, or when the issuer has no certificate for us (it may have lost its
+	# state). Away from home the issuer may take certificate fetches and
+	# check-ins but not CSRs; a device with an accepted CSR never needs to send one.
+	status=none
+	if ! csr_accepted; then
+		status=$(submit_csr) || exit
+		mark_csr_accepted
+	fi
 	got=1
 	if fetch_cert; then
 		got=0
-	elif [ "$status" = 202 ]; then
+	else
+		if [ "$status" = none ]; then
+			status=$(submit_csr) || exit
+			mark_csr_accepted
+		fi
+	fi
+	if [ $got -eq 1 ] && [ "$status" = 202 ]; then
 		echo "certificate queued; waiting up to ${WAIT_SECONDS}s"
 		deadline=$(($(date +%s) + WAIT_SECONDS))
 		while [ "$(date +%s)" -lt "$deadline" ]; do

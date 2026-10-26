@@ -73,6 +73,7 @@ create table if not exists events (
 `;
 
 const MAX_EVENTS = 1000;
+const MAX_UNBOUND = 200;
 
 export class Store {
   readonly db: Database;
@@ -133,6 +134,11 @@ export class Store {
            last_seen = excluded.last_seen, count = count + 1`,
       )
       .run({ pin, names: names.join(' '), reason, source_ip: sourceIp, now });
+    // Anyone who can reach the CSR endpoint can add a row, so keep only the
+    // most recent ones.
+    this.db
+      .query('delete from unbound where rowid not in (select rowid from unbound order by last_seen desc limit ?)')
+      .run(MAX_UNBOUND);
   }
 
   /** Once a key is bound, its earlier unbound requests are history, not news. */

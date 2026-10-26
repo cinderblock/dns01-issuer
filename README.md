@@ -89,7 +89,7 @@ systemctl enable --now dns01-issuer-client.timer
 
 Each run:
 
-- sends the (stable) CSR;
+- sends its CSR only when it is new, or when the issuer has no certificate for it (the issuer renews from the CSR it kept, so a device away from home needs only fetch and check-in);
 - fetches the current chain, waiting up to `WAIT_SECONDS` if it was only just queued;
 - installs the chain only if it is unexpired, for this key and for these names, then runs `RELOAD`;
 - checks in.

@@ -362,10 +362,14 @@ describe('the shell client', () => {
 
   test('run: sends its CSR, waits for issuance, installs, reloads and checks in', async () => {
     clock = Date.now();
+    let csrPosts = 0;
     const server = Bun.serve({
       hostname: '127.0.0.1',
       port: 0,
-      fetch: (req, srv) => handle(req, srv.requestIP(req)?.address ?? ''),
+      fetch: (req, srv) => {
+        if (new URL(req.url).pathname === '/api/v1/csr') csrPosts++;
+        return handle(req, srv.requestIP(req)?.address ?? '');
+      },
     });
     try {
       const dir = tempDir().replace(/\\/g, '/');
@@ -379,12 +383,15 @@ describe('the shell client', () => {
       expect(installed.pin).toBe(clientDevice.pin);
       expect(store.checkin(CLIENT_ROBOT)?.source_ip).toBe('127.0.0.1');
 
-      // A second run changes nothing and reloads nothing.
+      expect(csrPosts).toBe(1);
+
+      // A second run sends no CSR (the issuer has it), and changes and reloads nothing.
       const again = await runClient(`http://127.0.0.1:${server.port}`, dir, `echo reloaded-again`);
       if (again.code !== 0) console.error(again.out, again.err);
       expect(again.code).toBe(0);
       expect(again.out).toContain('certificate unchanged');
       expect(again.out).not.toContain('reloaded-again');
+      expect(csrPosts).toBe(1);
     } finally {
       server.stop(true);
     }
