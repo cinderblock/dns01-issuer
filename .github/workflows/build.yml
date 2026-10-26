@@ -97,6 +97,13 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            # Without these the base image's own (bun's) title, description and
+            # license show through on the package page.
+            org.opencontainers.image.title=dns01-issuer
+            org.opencontainers.image.description=CSR in, certificate out, by ACME DNS-01, for names bound to key fingerprints in its config
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
