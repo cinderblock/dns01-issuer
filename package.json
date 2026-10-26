@@ -1,0 +1,25 @@
+{
+  "name": "dns01-issuer",
+  "version": "0.1.0",
+  "description": "CSR in, certificate out, by ACME DNS-01, for names bound to key fingerprints in config",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test/unit",
+    "test:e2e": "bun test test/e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@peculiar/x509": "^2.2.0",
+    "reflect-metadata": "^0.2.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2"
+  }
+}

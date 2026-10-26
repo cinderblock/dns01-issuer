@@ -1,0 +1,5 @@
+* text=auto
+# Runs on Linux devices and in the image: a CRLF here breaks bash and systemd.
+client/** text eol=lf
+Dockerfile text eol=lf
+*.sh text eol=lf
