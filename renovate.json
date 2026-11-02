@@ -1,6 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "github>cinderblock/ops//renovate/app"
-  ]
+  "extends": ["github>cinderblock/ops//renovate/app"]
 }
